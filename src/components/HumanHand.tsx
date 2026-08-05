@@ -8,6 +8,9 @@ import { PlayingCard } from "./PlayingCard";
 interface HumanHandProps {
   hand: Card[];
   sortOrder?: CardSortOrder;
+  // While dealing, only show the first N cards of the sorted hand — so the
+  // fan visibly grows card by card instead of appearing all at once.
+  revealCount?: number;
 }
 
 const MAX_CARD_WIDTH = 72;
@@ -54,19 +57,20 @@ function layoutFan(containerWidth: number, count: number) {
   return { cardWidth, step: cardWidth * (1 - MAX_OVERLAP_RATIO) };
 }
 
-export function HumanHand({ hand, sortOrder = "rank" }: HumanHandProps) {
+export function HumanHand({ hand, sortOrder = "rank", revealCount }: HumanHandProps) {
   const sorted = sortHand(hand, sortOrder);
+  const visible = revealCount === undefined ? sorted : sorted.slice(0, revealCount);
   const [containerWidth, setContainerWidth] = useState(0);
 
   function handleLayout(event: LayoutChangeEvent) {
     setContainerWidth(event.nativeEvent.layout.width);
   }
 
-  const { cardWidth, step } = layoutFan(containerWidth, sorted.length);
+  const { cardWidth, step } = layoutFan(containerWidth, visible.length);
 
   return (
     <View style={styles.row} onLayout={handleLayout}>
-      {sorted.map((card, index) => (
+      {visible.map((card, index) => (
         <View key={card.id} style={index === 0 ? undefined : { marginLeft: step - cardWidth }}>
           <PlayingCard card={card} width={cardWidth} />
         </View>

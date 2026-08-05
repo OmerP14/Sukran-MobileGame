@@ -1,0 +1,54 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // users/{uid} — profile doc. Anyone signed in can read (needed for
+    // friend search results and showing a friend's name); only the owner
+    // can write, and only to fields a client is meant to touch directly —
+    // point balances go through increment() in profile-store.ts, not a
+    // blind overwrite, so a compromised client can't just set an arbitrary
+    // balance (still trusts the client not to lie about the *delta*, same
+    // trust level the app already had with local AsyncStorage).
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(uid)
+        && request.resource.data.displayName is string
+        && request.resource.data.displayNameLower == request.resource.data.displayName.lower();
+      allow update: if isOwner(uid);
+      allow delete: if false;
+    }
+
+    // friendRequests/{id} — a single document doubles as the pending
+    // request AND (once accepted) the friendship record itself; see
+    // src/store/friends-store.ts for why there's no separate friends list
+    // to keep in sync on both sides.
+    match /friendRequests/{requestId} {
+      allow read: if isSignedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid);
+
+      allow create: if isOwner(request.resource.data.fromUid)
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.status == "pending"
+        // Never let a client create a request that targets a guest account.
+        && get(/databases/$(database)/documents/users/$(request.resource.data.toUid)).data.isGuest == false;
+
+      // Only the recipient can respond, and only pending -> accepted/declined
+      // (can't resurrect a declined request or edit anything else).
+      allow update: if isOwner(resource.data.toUid)
+        && resource.data.status == "pending"
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
+        && request.resource.data.status in ["accepted", "declined"];
+
+      allow delete: if false;
+    }
+  }
+}

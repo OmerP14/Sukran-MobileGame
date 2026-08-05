@@ -13,7 +13,14 @@ import {
   confirmSukran as confirmSukranPure,
   handleSukranTimeout as handleSukranTimeoutPure,
 } from "../game/turn";
-import type { BotDifficulty, CardRequest, GameState, Player, Rank } from "../types/game";
+import type {
+  BotDifficulty,
+  CardRequest,
+  CurrencySystem,
+  GameState,
+  Player,
+  Rank,
+} from "../types/game";
 import { RANK_LABELS, emphasize, withAblative, withDative } from "../utils/format";
 import { randomInt } from "../utils/random";
 
@@ -83,11 +90,27 @@ const INITIAL_STATE: GameState = {
   sukranTargetPlayerId: undefined,
   turnNumber: 1,
   winnerIds: [],
+  // Placeholders only — startGame always overwrites these from the room's
+  // tier (and the host's adjustments) before the game actually begins.
+  sukranTimeoutMs: 2000,
+  requestTimeoutMs: 8000,
+  requestWarningMs: 4000,
+  system: "points",
+  stake: 0,
 };
 
 export interface CompletedSetAnnouncement {
   playerName: string;
   rank: Rank;
+}
+
+export interface StartGameOptions {
+  difficulty: BotDifficulty;
+  sukranTimeoutMs: number;
+  requestTimeoutMs: number;
+  requestWarningMs: number;
+  system: CurrencySystem;
+  stake: number;
 }
 
 export interface GameStore extends GameState {
@@ -98,7 +121,10 @@ export interface GameStore extends GameState {
   // forgotten Şükran, or a forfeited turn all point back here. Used so a
   // forfeit sends the turn back to that same player, not a fixed seat order.
   previousPlayerId: string | null;
-  startGame: (difficulty: BotDifficulty) => void;
+  startGame: (options: StartGameOptions) => void;
+  // Re-deals with the exact same table config (difficulty, timeouts) as the
+  // game that just ended — for "Play Again", which has no room/tier context.
+  restartSameTable: () => void;
   beginPlay: () => void;
   resetGame: () => void;
   submitCardRequest: (request: CardRequest) => void;
@@ -117,8 +143,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   completedSetAnnouncement: null,
   previousPlayerId: null,
 
-  startGame: (difficulty) => {
-    const players = createInitialPlayers(difficulty);
+  startGame: (options) => {
+    const players = createInitialPlayers(options.difficulty);
     const deck = shuffleDeck(createDeck());
     const dealt = dealCards(deck, players);
     // Whoever holds the 2 of clubs (Sinek 2) deals first, per house rule —
@@ -135,10 +161,28 @@ export const useGameStore = create<GameStore>((set, get) => ({
       sukranTargetPlayerId: undefined,
       turnNumber: 1,
       winnerIds: [],
+      sukranTimeoutMs: options.sukranTimeoutMs,
+      requestTimeoutMs: options.requestTimeoutMs,
+      requestWarningMs: options.requestWarningMs,
+      system: options.system,
+      stake: options.stake,
       sessionStats: INITIAL_SESSION_STATS,
       pendingAnnouncement: null,
       completedSetAnnouncement: null,
       previousPlayerId: null,
+    });
+  },
+
+  restartSameTable: () => {
+    const state = get();
+    const bot = state.players.find((p) => p.type === "bot" && p.botDifficulty);
+    get().startGame({
+      difficulty: bot?.botDifficulty ?? "normal",
+      sukranTimeoutMs: state.sukranTimeoutMs,
+      requestTimeoutMs: state.requestTimeoutMs,
+      requestWarningMs: state.requestWarningMs,
+      system: state.system,
+      stake: state.stake,
     });
   },
 

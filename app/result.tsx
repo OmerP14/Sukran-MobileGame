@@ -1,24 +1,50 @@
 import { router } from "expo-router";
+import { useEffect, useRef } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { CurrencyIcon } from "../src/components/CurrencyIcon";
 import { GradientBackground } from "../src/components/GradientBackground";
+import { CURRENCY_INFO, formatBalance } from "../src/constants/lobby";
 import { COLORS, FONTS, RADIUS, SPACING } from "../src/constants/theme";
+import { calculateResults } from "../src/game/payout";
 import { useGameStore } from "../src/store/game-store";
-import { useSettingsStore } from "../src/store/settings-store";
+import { useProfileStore } from "../src/store/profile-store";
+
+const HUMAN_ID = "human";
 
 export default function ResultScreen() {
   const players = useGameStore((state) => state.players);
   const winnerIds = useGameStore((state) => state.winnerIds);
   const turnNumber = useGameStore((state) => state.turnNumber);
   const sessionStats = useGameStore((state) => state.sessionStats);
-  const startGame = useGameStore((state) => state.startGame);
+  const restartSameTable = useGameStore((state) => state.restartSameTable);
   const resetGame = useGameStore((state) => state.resetGame);
-  const botDifficulty = useSettingsStore((state) => state.settings.botDifficulty);
+  const system = useGameStore((state) => state.system);
+  const stake = useGameStore((state) => state.stake);
+  const creditCurrency = useProfileStore((state) => state.creditCurrency);
 
   const ranking = [...players].sort((a, b) => b.completedSets.length - a.completedSets.length);
   const winnerNames = players.filter((p) => winnerIds.includes(p.id)).map((p) => p.name);
 
+  // Payout follows finishing position, not just win/lose: 1st place takes
+  // most of the 4-way pot, 2nd gets their stake back, 3rd/4th get nothing.
+  // Players tied on completed sets pool together whichever positions their
+  // tie spans and split it evenly — see src/game/payout.ts.
+  const results = calculateResults(players, system, stake);
+  const resultByPlayerId = new Map(results.map((result) => [result.playerId, result]));
+  const payout = resultByPlayerId.get(HUMAN_ID)?.payout ?? 0;
+  const currency = CURRENCY_INFO[system];
+
+  const creditedRef = useRef(false);
+  useEffect(() => {
+    if (creditedRef.current || payout <= 0) {
+      return;
+    }
+    creditedRef.current = true;
+    creditCurrency(system, payout);
+  }, [payout, system, creditCurrency]);
+
   function handlePlayAgain() {
-    startGame(botDifficulty);
+    restartSameTable();
     router.replace("/game");
   }
 
@@ -33,14 +59,30 @@ export default function ResultScreen() {
         <Text style={styles.winnerLabel}>{winnerNames.length > 1 ? "Kazananlar" : "Kazanan"}</Text>
         <Text style={styles.winnerName}>{winnerNames.join(", ")}</Text>
 
+        {payout > 0 && (
+          <View style={styles.payoutChip}>
+            <CurrencyIcon system={system} size={22} />
+            <Text style={styles.payoutText}>+{formatBalance(payout)}</Text>
+          </View>
+        )}
+
         <View style={styles.rankingBlock}>
-          {ranking.map((player, index) => (
-            <View key={player.id} style={styles.rankingRow}>
-              <Text style={styles.rankingPosition}>{index + 1}.</Text>
-              <Text style={styles.rankingName}>{player.name}</Text>
-              <Text style={styles.rankingSets}>{player.completedSets.length} dörtlü</Text>
-            </View>
-          ))}
+          {ranking.map((player) => {
+            const result = resultByPlayerId.get(player.id);
+            return (
+              <View key={player.id} style={styles.rankingRow}>
+                <Text style={styles.rankingPosition}>{result?.rank ?? "-"}.</Text>
+                <Text style={styles.rankingName}>{player.name}</Text>
+                <Text style={styles.rankingSets}>{player.completedSets.length} dörtlü</Text>
+                {player.id === HUMAN_ID && (
+                  <Text style={styles.rankingPayout}>
+                    {payout > 0 ? `+${formatBalance(payout)}` : `-${formatBalance(stake)}`}{" "}
+                    {currency.name}
+                  </Text>
+                )}
+              </View>
+            );
+          })}
         </View>
 
         <View style={styles.statsGrid}>
@@ -97,6 +139,22 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 5,
   },
+  payoutChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: SPACING.xs,
+    backgroundColor: COLORS.panel,
+    borderWidth: 1.5,
+    borderColor: COLORS.gold,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.sm,
+  },
+  payoutText: {
+    color: COLORS.goldBright,
+    fontFamily: FONTS.headingBold,
+    fontSize: 18,
+  },
   rankingBlock: {
     width: "100%",
     backgroundColor: COLORS.panel,
@@ -124,6 +182,12 @@ const styles = StyleSheet.create({
   rankingSets: {
     color: COLORS.textMuted,
     fontSize: 13,
+  },
+  rankingPayout: {
+    color: COLORS.goldBright,
+    fontSize: 12,
+    fontWeight: "700",
+    marginLeft: SPACING.sm,
   },
   statsGrid: {
     width: "100%",

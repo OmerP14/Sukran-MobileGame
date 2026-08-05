@@ -1,13 +1,9 @@
 import { create } from "zustand";
-import { DEFAULT_SUKRAN_TIMEOUT_MS } from "../constants/config";
-import type { BotDifficulty } from "../types/game";
 import { loadJSON, saveJSON } from "../utils/storage";
 
 export type CardSortOrder = "rank" | "suit";
 
 export interface Settings {
-  botDifficulty: BotDifficulty;
-  sukranTimeoutMs: number;
   soundEnabled: boolean;
   hapticsEnabled: boolean;
   cardSortOrder: CardSortOrder;
@@ -35,8 +31,6 @@ const SETTINGS_STORAGE_KEY = "sukran/settings";
 const STATISTICS_STORAGE_KEY = "sukran/statistics";
 
 const DEFAULT_SETTINGS: Settings = {
-  botDifficulty: "normal",
-  sukranTimeoutMs: DEFAULT_SUKRAN_TIMEOUT_MS,
   soundEnabled: true,
   hapticsEnabled: true,
   cardSortOrder: "rank",

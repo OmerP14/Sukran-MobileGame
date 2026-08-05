@@ -5,14 +5,15 @@ import { CurrencyIcon } from "../src/components/CurrencyIcon";
 import { GradientBackground } from "../src/components/GradientBackground";
 import {
   CURRENCY_INFO,
-  TIERS,
   formatBalance,
   formatTierRange,
   isTierUnlocked,
+  tiersForSystem,
   type CurrencySystem,
 } from "../src/constants/lobby";
 import { COLORS, FONTS, RADIUS, SPACING } from "../src/constants/theme";
 import { useProfileStore } from "../src/store/profile-store";
+import { playSound } from "../src/utils/sound";
 
 export default function LobbyScreen() {
   const profile = useProfileStore((state) => state.profile);
@@ -34,8 +35,10 @@ export default function LobbyScreen() {
 
   const balance = system === "points" ? profile.points : profile.lokum;
   const currency = CURRENCY_INFO[system];
+  const tiers = tiersForSystem(system);
 
   function openTier(tierId: string) {
+    playSound("uiTap");
     router.push({ pathname: "/rooms", params: { system, tier: tierId } });
   }
 
@@ -50,7 +53,13 @@ export default function LobbyScreen() {
       <View style={styles.container}>
         <View style={styles.topBar}>
           <View style={styles.leftGroup}>
-            <Pressable style={styles.iconButton} onPress={() => setMenuOpen(true)}>
+            <Pressable
+              style={styles.iconButton}
+              onPress={() => {
+                playSound("uiTap");
+                setMenuOpen(true);
+              }}
+            >
               <Text style={styles.iconButtonText}>☰</Text>
             </Pressable>
             <View style={styles.avatar}>
@@ -82,7 +91,7 @@ export default function LobbyScreen() {
         </View>
 
         <View style={styles.tierGrid}>
-          {TIERS.map((tier) => {
+          {tiers.map((tier) => {
             const unlocked = isTierUnlocked(tier, balance);
             return (
               <View key={tier.id} style={styles.tierColumn}>
@@ -137,10 +146,10 @@ export default function LobbyScreen() {
                 }}
               />
               <MenuItem
-                label="Ayarlar"
+                label="Arkadaşlar"
                 onPress={() => {
                   setMenuOpen(false);
-                  router.push("/settings");
+                  router.push("/friends");
                 }}
               />
               <MenuItem
@@ -169,7 +178,13 @@ function MenuItem({
   onPress: () => void;
 }) {
   return (
-    <Pressable style={styles.menuItem} onPress={onPress}>
+    <Pressable
+      style={styles.menuItem}
+      onPress={() => {
+        playSound("uiTap");
+        onPress();
+      }}
+    >
       <Text style={[styles.menuItemText, danger && styles.menuItemTextDanger]}>{label}</Text>
     </Pressable>
   );

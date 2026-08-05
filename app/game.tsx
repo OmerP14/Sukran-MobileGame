@@ -4,22 +4,31 @@ import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { CardRequestPanel } from "../src/components/CardRequestPanel";
-import { DealingAnimation } from "../src/components/DealingAnimation";
+import {
+  DEALING_ANIMATION_DURATION_MS,
+  DealingAnimation,
+  DealingHumanHand,
+  DealingOpponentHand,
+} from "../src/components/DealingAnimation";
 import { GameMessage } from "../src/components/GameMessage";
 import { GradientBackground } from "../src/components/GradientBackground";
-import { HumanHand } from "../src/components/HumanHand";
-import { OpponentHand } from "../src/components/OpponentHand";
 import { PlayerSeat } from "../src/components/PlayerSeat";
+import { PlayerSettingsPanel } from "../src/components/PlayerSettingsPanel";
 import { SetCompleteBanner } from "../src/components/SetCompleteBanner";
 import { TurnBadge } from "../src/components/TurnBadge";
-import { REQUEST_TIMEOUT_MS, REQUEST_WARNING_MS } from "../src/constants/config";
-import { COLORS, FONTS, GRADIENTS, RADIUS } from "../src/constants/theme";
+import { COLORS, FONTS, GRADIENTS, RADIUS, SPACING } from "../src/constants/theme";
 import { useGameStore } from "../src/store/game-store";
 import { useSettingsStore } from "../src/store/settings-store";
 import type { Player } from "../src/types/game";
 import { emphasize, formatLastMoveMessage, getPlayerName } from "../src/utils/format";
+import { playSound } from "../src/utils/sound";
 
 const HUMAN_ID = "human";
+const JOINING_STAGE_MS = 550;
+const DEALING_BUFFER_MS = 200;
+// sukran-timeout.mp3 is ~1.1s — repeat a little sooner than that so the tick
+// loop doesn't leave an audible gap between repeats.
+const SUKRAN_TIMEOUT_LOOP_MS = 950;
 
 export default function GameScreen() {
   const players = useGameStore((state) => state.players);
@@ -29,6 +38,9 @@ export default function GameScreen() {
   const winnerIds = useGameStore((state) => state.winnerIds);
   const turnNumber = useGameStore((state) => state.turnNumber);
   const sessionStats = useGameStore((state) => state.sessionStats);
+  const sukranTimeoutMs = useGameStore((state) => state.sukranTimeoutMs);
+  const requestTimeoutMs = useGameStore((state) => state.requestTimeoutMs);
+  const requestWarningMs = useGameStore((state) => state.requestWarningMs);
   const pendingAnnouncement = useGameStore((state) => state.pendingAnnouncement);
   const completedSetAnnouncement = useGameStore((state) => state.completedSetAnnouncement);
   const submitCardRequest = useGameStore((state) => state.submitCardRequest);
@@ -41,15 +53,15 @@ export default function GameScreen() {
   );
 
   const cardSortOrder = useSettingsStore((state) => state.settings.cardSortOrder);
-  const sukranTimeoutMs = useSettingsStore((state) => state.settings.sukranTimeoutMs);
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled);
   const recordGameResult = useSettingsStore((state) => state.recordGameResult);
 
   const botTurnKeyRef = useRef<string | null>(null);
   const resultRecordedRef = useRef(false);
   const [sukranRemainingMs, setSukranRemainingMs] = useState(sukranTimeoutMs);
-  const [requestRemainingMs, setRequestRemainingMs] = useState(REQUEST_TIMEOUT_MS);
+  const [requestRemainingMs, setRequestRemainingMs] = useState(requestTimeoutMs);
   const [dealingStage, setDealingStage] = useState<"joining" | "dealing">("joining");
+  const [playerSettingsOpen, setPlayerSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (phase === "setup") {
@@ -59,14 +71,18 @@ export default function GameScreen() {
 
   // Brief "everyone's taking their seat, then the deck is dealt" beat before
   // the first request can be made — a sound effect lands on the dealing step,
-  // and the flying-card animation only plays during the "dealing" half.
+  // and the flying-card animation only plays during the "dealing" half. Play
+  // only starts once the dealing animation has actually finished.
   useEffect(() => {
     if (phase !== "dealing") {
       return;
     }
     setDealingStage("joining");
-    const dealTimer = setTimeout(() => setDealingStage("dealing"), 700);
-    const startTimer = setTimeout(() => useGameStore.getState().beginPlay(), 1900);
+    const dealTimer = setTimeout(() => setDealingStage("dealing"), JOINING_STAGE_MS);
+    const startTimer = setTimeout(
+      () => useGameStore.getState().beginPlay(),
+      JOINING_STAGE_MS + DEALING_ANIMATION_DURATION_MS + DEALING_BUFFER_MS
+    );
     return () => {
       clearTimeout(dealTimer);
       clearTimeout(startTimer);
@@ -94,6 +110,7 @@ export default function GameScreen() {
       return;
     }
     resultRecordedRef.current = true;
+    playSound(winnerIds.includes(HUMAN_ID) ? "gameWin" : "gameLose");
     const human = players.find((p) => p.id === HUMAN_ID);
     recordGameResult({
       won: winnerIds.includes(HUMAN_ID),
@@ -106,6 +123,12 @@ export default function GameScreen() {
   }, [phase, players, winnerIds, sessionStats, recordGameResult]);
 
   const showSukranOverlay = phase === "waiting_for_sukran" && currentPlayerId === HUMAN_ID;
+
+  useEffect(() => {
+    if (showSukranOverlay) {
+      playSound("sukranAppear");
+    }
+  }, [showSukranOverlay]);
 
   useEffect(() => {
     if (!showSukranOverlay) {
@@ -127,11 +150,57 @@ export default function GameScreen() {
     return () => clearInterval(interval);
   }, [showSukranOverlay, sukranTimeoutMs, handleSukranTimeout, hapticsEnabled]);
 
+  // Şükran being forgotten gets the same "kart yok" sound as a failed
+  // request — whoever forgot it, human or bot — but only when the turn
+  // lands on someone else afterwards; if it lands on the human, the "your
+  // turn" cue further down already covers it. Watched via
+  // sessionStats.sukranForgotten (which increments either way) rather than
+  // lastMove, since neither confirmSukran nor handleSukranTimeout touch any
+  // of the lastMove fields the effect below depends on — and this is the
+  // only way to catch a BOT forgetting Şükran at all, which previously had
+  // no sound whatsoever.
+  const sukranForgottenCountRef = useRef(sessionStats.sukranForgotten);
+  useEffect(() => {
+    if (sessionStats.sukranForgotten === sukranForgottenCountRef.current) {
+      return;
+    }
+    sukranForgottenCountRef.current = sessionStats.sukranForgotten;
+    if (currentPlayerId !== HUMAN_ID) {
+      playSound("requestFail");
+    }
+  }, [sessionStats.sukranForgotten, currentPlayerId]);
+
   useEffect(() => {
     if (completedSetAnnouncement && hapticsEnabled) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     }
   }, [completedSetAnnouncement, hapticsEnabled]);
+
+  // A resolved request only gets a sound here on failure ("Yok") — a
+  // success is never announced by this effect at all, whether it's the
+  // human's or a bot's: a completed dörtlü only gets a haptic (no sound,
+  // see completedSetAnnouncement above), and an ordinary successful take
+  // (no dörtlü) is silent by design. Failure gets a sound for everyone,
+  // except when it hands the turn
+  // straight to the human: that moment already gets its own "your turn" cue
+  // below, and playing both together is what was confusing. Deliberately
+  // keyed on the move's own fields rather than the `lastMove` object
+  // itself: confirmSukran/handleSukranTimeout both rebuild lastMove
+  // (`{ ...lastMove, forgotSukran }`) to record the Şükran outcome, which
+  // would otherwise replay this sound when a player just timed out on Şükran.
+  useEffect(() => {
+    if (lastMove && !lastMove.success && currentPlayerId !== HUMAN_ID) {
+      playSound("requestFail");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    lastMove?.requesterId,
+    lastMove?.targetPlayerId,
+    lastMove?.rank,
+    lastMove?.requestedAmount,
+    lastMove?.transferredAmount,
+    lastMove?.success,
+  ]);
 
   // Light haptic whenever the player's own request just succeeded.
   useEffect(() => {
@@ -146,22 +215,67 @@ export default function GameScreen() {
   const showRequestPanelForTimer =
     phase === "waiting_for_request" && currentPlayerId === HUMAN_ID && !completedSetAnnouncement;
 
+  // "Your turn" cue — deliberately request-success, not sukran-appear:
+  // sukran-appear is reserved for the ŞÜKRAN button itself. Only fires when
+  // the human genuinely just gained the turn from someone else — not
+  // merely continuing their own turn after confirming Şükran or dismissing
+  // a dörtlü tamamlandı banner (currentPlayerId never actually left
+  // HUMAN_ID during either of those), and not on every successful request
+  // in a row while they keep the turn. Tracked by remembering the last
+  // player this already played for, reset the moment the turn is no longer
+  // the human's at all.
+  const lastYourTurnPlayerRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (currentPlayerId !== HUMAN_ID) {
+      lastYourTurnPlayerRef.current = null;
+      return;
+    }
+    if (showRequestPanelForTimer && lastYourTurnPlayerRef.current !== currentPlayerId) {
+      playSound("requestSuccess");
+      lastYourTurnPlayerRef.current = currentPlayerId;
+    }
+  }, [currentPlayerId, showRequestPanelForTimer]);
+
   useEffect(() => {
     if (!showRequestPanelForTimer) {
       return;
     }
     const startedAt = Date.now();
-    setRequestRemainingMs(REQUEST_TIMEOUT_MS);
+    setRequestRemainingMs(requestTimeoutMs);
     const interval = setInterval(() => {
-      const left = Math.max(0, REQUEST_TIMEOUT_MS - (Date.now() - startedAt));
+      const left = Math.max(0, requestTimeoutMs - (Date.now() - startedAt));
       setRequestRemainingMs(left);
       if (left <= 0) {
         clearInterval(interval);
         useGameStore.getState().forfeitCurrentRequest();
+        // The human missed their window — that's a "kart yok"-shaped
+        // outcome too, same suppression rule as everywhere else: only if
+        // the turn actually moves off them.
+        if (useGameStore.getState().currentPlayerId !== HUMAN_ID) {
+          playSound("requestFail");
+        }
       }
     }, 100);
     return () => clearInterval(interval);
-  }, [showRequestPanelForTimer]);
+  }, [showRequestPanelForTimer, requestTimeoutMs]);
+
+  // The actual tick-tick countdown cue, once the request timer gets down to
+  // its last few seconds — a "hurry up" nudge, distinct from the one-off
+  // "your turn" ding above.
+  const requestUrgent =
+    showRequestPanelForTimer && requestRemainingMs > 0 && requestRemainingMs <= requestWarningMs;
+
+  useEffect(() => {
+    if (!requestUrgent) {
+      return;
+    }
+    // The clip itself is only ~1.1s but the urgent window can run several
+    // seconds (longer in the newbie room) — loop it for as long as the
+    // urgency lasts instead of leaving it to play once and go silent.
+    playSound("sukranTimeout");
+    const interval = setInterval(() => playSound("sukranTimeout"), SUKRAN_TIMEOUT_LOOP_MS);
+    return () => clearInterval(interval);
+  }, [requestUrgent]);
 
   // The moment a request succeeds, the transferred/completed cards are already
   // gone from the hand in the store — but the player hasn't said Şükran yet.
@@ -194,7 +308,9 @@ export default function GameScreen() {
   const botTop = displayed(players.find((p) => p.id === "bot-2"));
   const botLeft = displayed(players.find((p) => p.id === "bot-1"));
   const botRight = displayed(players.find((p) => p.id === "bot-3"));
-  const opponents = players.filter((p) => p.id !== HUMAN_ID);
+  // A player with an empty hand has nothing to give — never a valid target,
+  // even if it's still their turn to make their own request.
+  const opponents = players.filter((p) => p.id !== HUMAN_ID && p.hand.length > 0);
 
   const isHumanTurn = currentPlayerId === HUMAN_ID;
   const showRequestPanel =
@@ -226,11 +342,22 @@ export default function GameScreen() {
         <Pressable
           style={styles.quitButton}
           onPress={() => {
+            playSound("uiTap");
             resetGame();
             router.replace("/lobby");
           }}
         >
           <Text style={styles.quitButtonText}>✕</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.settingsButton}
+          onPress={() => {
+            playSound("uiTap");
+            setPlayerSettingsOpen(true);
+          }}
+        >
+          <Text style={styles.settingsButtonText}>⚙</Text>
         </Pressable>
 
         <View style={styles.turnBadgeWrap}>
@@ -240,7 +367,11 @@ export default function GameScreen() {
         {botTop && (
           <View style={styles.topSeatWrap}>
             <View style={styles.topHandBleed}>
-              <OpponentHand cardCount={botTop.hand.length} />
+              <DealingOpponentHand
+                seat="top"
+                dealing={phase === "dealing"}
+                actualCount={botTop.hand.length}
+              />
             </View>
             <PlayerSeat player={botTop} isCurrentTurn={currentPlayerId === botTop.id} />
           </View>
@@ -249,7 +380,12 @@ export default function GameScreen() {
         {botLeft && (
           <View style={styles.leftSeatWrap}>
             <View style={styles.leftHandBleed}>
-              <OpponentHand cardCount={botLeft.hand.length} orientation="column" />
+              <DealingOpponentHand
+                seat="left"
+                dealing={phase === "dealing"}
+                actualCount={botLeft.hand.length}
+                orientation="column"
+              />
             </View>
             <PlayerSeat player={botLeft} isCurrentTurn={currentPlayerId === botLeft.id} />
           </View>
@@ -258,7 +394,12 @@ export default function GameScreen() {
         {botRight && (
           <View style={styles.rightSeatWrap}>
             <View style={styles.rightHandBleed}>
-              <OpponentHand cardCount={botRight.hand.length} orientation="column" />
+              <DealingOpponentHand
+                seat="right"
+                dealing={phase === "dealing"}
+                actualCount={botRight.hand.length}
+                orientation="column"
+              />
             </View>
             <PlayerSeat player={botRight} isCurrentTurn={currentPlayerId === botRight.id} />
           </View>
@@ -274,7 +415,11 @@ export default function GameScreen() {
           <View style={styles.humanBlock}>
             <PlayerSeat player={human} isCurrentTurn={isHumanTurn} />
             <View style={styles.humanHandWrap}>
-              <HumanHand hand={human.hand} sortOrder={cardSortOrder} />
+              <DealingHumanHand
+                hand={human.hand}
+                sortOrder={cardSortOrder}
+                dealing={phase === "dealing"}
+              />
             </View>
           </View>
         )}
@@ -283,11 +428,18 @@ export default function GameScreen() {
           <CardRequestPanel
             opponents={opponents}
             remainingMs={requestRemainingMs}
-            totalMs={REQUEST_TIMEOUT_MS}
-            urgent={requestRemainingMs <= REQUEST_WARNING_MS}
-            onSubmit={({ targetPlayerId, rank, amount }) =>
-              submitCardRequest({ requesterId: HUMAN_ID, targetPlayerId, rank, amount })
-            }
+            totalMs={requestTimeoutMs}
+            urgent={requestRemainingMs <= requestWarningMs}
+            onSubmit={({ targetPlayerId, rank, amount }) => {
+              submitCardRequest({ requesterId: HUMAN_ID, targetPlayerId, rank, amount });
+              // Resolution is synchronous, so the outcome is already in the
+              // store — only play the "sent" whoosh on success. A failure
+              // gets its own "kart yok" sound below; playing both together
+              // for the same tap is what sounded like clashing.
+              if (useGameStore.getState().lastMove?.success) {
+                playSound("requestSubmit");
+              }
+            }}
           />
         )}
 
@@ -303,6 +455,7 @@ export default function GameScreen() {
           <View style={styles.sukranOverlay} pointerEvents="box-none">
             <Pressable
               onPress={() => {
+                playSound("sukranConfirm");
                 if (hapticsEnabled) {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }
@@ -325,9 +478,10 @@ export default function GameScreen() {
           </View>
         )}
 
+        {dealingStage === "dealing" && phase === "dealing" && <DealingAnimation />}
+
         {phase === "dealing" && (
-          <View style={styles.dealingOverlay}>
-            {dealingStage === "dealing" && <DealingAnimation />}
+          <View style={styles.dealingBanner} pointerEvents="none">
             <Text style={styles.dealingTitle}>ŞÜKRAN</Text>
             <Text style={styles.dealingMessageText}>
               {dealingStage === "joining" ? "Oyuncular masaya oturuyor…" : "Kartlar dağıtılıyor…"}
@@ -335,6 +489,15 @@ export default function GameScreen() {
           </View>
         )}
       </View>
+
+      {playerSettingsOpen && (
+        <Pressable style={styles.settingsBackdrop} onPress={() => setPlayerSettingsOpen(false)}>
+          <Pressable style={styles.settingsCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.settingsTitle}>Ayarlarım</Text>
+            <PlayerSettingsPanel />
+          </Pressable>
+        </Pressable>
+      )}
     </GradientBackground>
   );
 }
@@ -362,6 +525,52 @@ const styles = StyleSheet.create({
     color: COLORS.cream,
     fontWeight: "700",
     fontSize: 13,
+  },
+  settingsButton: {
+    position: "absolute",
+    top: 4,
+    right: 4,
+    width: 30,
+    height: 30,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.slate,
+    borderWidth: 1,
+    borderColor: COLORS.panelBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 30,
+  },
+  settingsButtonText: {
+    color: COLORS.cream,
+    fontSize: 15,
+  },
+  settingsBackdrop: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(3, 17, 12, 0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 50,
+    padding: SPACING.lg,
+  },
+  settingsCard: {
+    width: "100%",
+    maxWidth: 420,
+    backgroundColor: COLORS.panel,
+    borderWidth: 1.5,
+    borderColor: COLORS.panelBorder,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    gap: SPACING.lg,
+  },
+  settingsTitle: {
+    color: COLORS.goldBright,
+    fontFamily: FONTS.heading,
+    fontSize: 20,
+    textAlign: "center",
   },
   turnBadgeWrap: {
     position: "absolute",
@@ -468,22 +677,19 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.feltBottom,
     borderRadius: RADIUS.pill,
   },
-  dealingOverlay: {
+  dealingBanner: {
     position: "absolute",
-    top: 0,
+    top: "6%",
     left: 0,
     right: 0,
-    bottom: 0,
-    backgroundColor: COLORS.overlay,
     alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    zIndex: 60,
+    gap: 2,
+    zIndex: 45,
   },
   dealingTitle: {
     color: COLORS.goldBright,
     fontFamily: FONTS.display,
-    fontSize: 34,
+    fontSize: 22,
     letterSpacing: 2,
     textShadowColor: "rgba(0, 0, 0, 0.45)",
     textShadowOffset: { width: 0, height: 3 },
@@ -492,6 +698,6 @@ const styles = StyleSheet.create({
   dealingMessageText: {
     color: COLORS.textPrimary,
     fontFamily: FONTS.heading,
-    fontSize: 15,
+    fontSize: 13,
   },
 });

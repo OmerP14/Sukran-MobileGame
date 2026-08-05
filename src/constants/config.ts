@@ -1,11 +1,18 @@
 import type { BotDifficulty } from "../types/game";
 
-export const DEFAULT_SUKRAN_TIMEOUT_MS = 2000;
+// Şükran and card-request timeouts now come from the room's tier (see
+// TIER_SUKRAN_TIMEOUT_MS / TIER_REQUEST_TIMEOUT_MS in constants/lobby.ts) and
+// are host-adjustable within these bounds when setting up a table.
+export const MIN_SUKRAN_TIMEOUT_MS = 1000;
+export const MAX_SUKRAN_TIMEOUT_MS = 6000;
+export const SUKRAN_TIMEOUT_STEP_MS = 500;
 
-// How long the human has to submit a card request before the game picks one automatically.
-export const REQUEST_TIMEOUT_MS = 8000;
-// Below this much time left, the request panel switches to an urgent "about to auto-pick" state.
-export const REQUEST_WARNING_MS = 4000;
+export const MIN_REQUEST_TIMEOUT_MS = 4000;
+export const MAX_REQUEST_TIMEOUT_MS = 20000;
+export const REQUEST_TIMEOUT_STEP_MS = 1000;
+
+// Flat entry fee for every points-system table, regardless of room.
+export const POINTS_ENTRY_FEE = 40;
 
 export const SET_ANNOUNCEMENT_DISPLAY_MS = 2000;
 

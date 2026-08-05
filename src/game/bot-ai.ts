@@ -129,7 +129,11 @@ export function chooseBotMove(
   difficulty: BotDifficulty
 ): BotDecision {
   const bot = getPlayerById(state, botPlayerId);
-  const opponents = state.players.filter((player) => player.id !== botPlayerId);
+  // A player with an empty hand has nothing to give, so they're never a
+  // valid target — regardless of who's asking or how many cards they hold.
+  const opponents = state.players.filter(
+    (player) => player.id !== botPlayerId && player.hand.length > 0
+  );
   if (opponents.length === 0) {
     throw new Error("A bot needs at least one opponent to request cards from.");
   }
