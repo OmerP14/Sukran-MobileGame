@@ -20,6 +20,22 @@ A mobile take on **Şükran**, a traditional Turkish card game, built with **Rea
 
 ---
 
+## Screenshots
+
+| Login | Lobby | Rooms |
+|---|---|---|
+| ![Login](screenshots/01_login.png) | ![Lobby](screenshots/02_lobby.png) | ![Rooms](screenshots/03_rooms.png) |
+
+| Table setup | Game table | Şükran! |
+|---|---|---|
+| ![Table setup](screenshots/04_table_setup.png) | ![Game table](screenshots/05_game_table.png) | ![Şükran button](screenshots/08_sukran.png) |
+
+| Ask: who? | Ask: which card? | Late game |
+|---|---|---|
+| ![Pick opponent](screenshots/06_request_target.png) | ![Pick rank](screenshots/07_request_rank.png) | ![Late game](screenshots/09_late_game.png) |
+
+> Screenshots were taken from the web build with a local demo profile (no live Firebase backend).
+
 ## How the game works
 
 | | |

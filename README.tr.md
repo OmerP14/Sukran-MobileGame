@@ -20,6 +20,22 @@ Geleneksel Türk kart oyunu **Şükran**'ın **React Native (Expo)** ve **TypeSc
 
 ---
 
+## Ekran görüntüleri
+
+| Giriş | Lobi | Odalar |
+|---|---|---|
+| ![Login](screenshots/01_login.png) | ![Lobby](screenshots/02_lobby.png) | ![Rooms](screenshots/03_rooms.png) |
+
+| Masa kurulumu | Oyun masası | Şükran! |
+|---|---|---|
+| ![Table setup](screenshots/04_table_setup.png) | ![Game table](screenshots/05_game_table.png) | ![Şükran button](screenshots/08_sukran.png) |
+
+| İstek: kimden? | İstek: hangi kart? | Oyun ilerledikçe |
+|---|---|---|
+| ![Pick opponent](screenshots/06_request_target.png) | ![Pick rank](screenshots/07_request_rank.png) | ![Late game](screenshots/09_late_game.png) |
+
+> Ekran görüntüleri web sürümünden, yerel bir demo profiliyle alındı (canlı Firebase bağlantısı olmadan).
+
 ## Oyun nasıl oynanır?
 
 | | |
